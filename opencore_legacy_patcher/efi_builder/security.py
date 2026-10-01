@@ -5,9 +5,6 @@ security.py: Class for handling macOS Security Patches, invocation from build.py
 import logging
 import binascii
 import sys
-import wx
-import threading
-import webbrowser
 
 from . import support
 from .. import constants
@@ -146,10 +143,6 @@ class BuildSecurity:
         """Return True if this T2 model should explicitly skip Intel graphics injection."""
         return self.model in _T2_NO_IGPU_MODELS
 
-    def _t2_uses_amfipass(self) -> bool:
-        """T2 builds enable AMFIPass in misc._t2_handling (runs after security)."""
-        return True # Restored for Tahoe AMFI stall mitigation
-
     # ------------------------------------------------------------------
     # Graphics injection helpers
     # ------------------------------------------------------------------
@@ -174,16 +167,6 @@ class BuildSecurity:
     # ------------------------------------------------------------------
     # Config helpers
     # ------------------------------------------------------------------
-
-    def _set_nested_config_value(self, path: str, value: any) -> None:
-        """Write a value into a nested config dict using a dotted path."""
-        node = self.config
-        keys = path.split('.')
-        for part in keys[:-1]:
-            if part not in node or not isinstance(node[part], dict):
-                node[part] = {}
-            node = node[part]
-        node[keys[-1]] = value
 
     # ------------------------------------------------------------------
     # T2 security helpers
@@ -421,6 +404,6 @@ class BuildSecurity:
             self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "-amfipassbeta ipc_control_port_options=0")
             current_args = self._read_nvram_string(APPLE_NVRAM_UUID, "boot-args")
             if "amfi=0x80" in current_args:
-                if not self._is_t2_mac():
+                if not self._is_t2_mac() and not self.constants.disable_amfi:
                     cleaned_args = " ".join([arg for arg in current_args.split() if arg != "amfi=0x80"])
                     self.config["NVRAM"]["Add"][APPLE_NVRAM_UUID]["boot-args"] = cleaned_args

