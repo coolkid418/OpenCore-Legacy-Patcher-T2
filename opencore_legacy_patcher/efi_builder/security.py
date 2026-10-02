@@ -314,6 +314,12 @@ class BuildSecurity:
                 if self._requires_t2_graphics_injection():
                     self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "-amfipassbeta igfxonln=1 igfxfw=2 forceRenderStandby=0 agdpmod=vit9696")
 
+                if self.is_tahoe_target:
+                    logging.info("- Injecting SpoofVMM for macOS Tahoe bypass on T2")
+                    support.BuildSupport(self.model, self.constants, self.config).enable_kext(
+                        "SpoofVMM.kext", self.constants.spoofvmm_version, self.constants.spoofvmm_path
+                    )
+
                 if self.constants.t2_installer_workaround is True:
                     logging.info("- Enabling T2 Installer Workarounds (VESA Mode & AMFI bypass)")
                     self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "-radvesa -igfxvesa -amfipassbeta")
@@ -388,9 +394,21 @@ class BuildSecurity:
                         logging.info("- Using AMFIPass & Library Validation Enforcement Bypass for Apple Account compatibility")
                         self._update_nvram_string(APPLE_NVRAM_UUID, "boot-args", "-amfipassbeta ipc_control_port_options=0")
 
-                if self.constants.secure_status is False:
+                # Root patching rebuilds the Boot/System Kernel Collections, which breaks
+                # their .im4m (x86legacyap) signature. With SecureBootModel left at
+                # "Default", Apple's boot.efi then fails to verify BootKernelExtensions.kc
+                # (Err(0x1A) MKRN/MKRD) and resets straight into Recovery (Issue #465,
+                # iMac19,1). secure_status alone is not reliable for this - a stale
+                # "GUI:secure_status" from the settings file can override the probed value -
+                # so a lowered SIP always disables Apple Secure Boot here as well.
+                _sip_lowered = self.constants.sip_status is False or bool(self.constants.custom_sip_value)
+                if self.constants.secure_status is False or _sip_lowered:
+                    if self.constants.secure_status is not False:
+                        logging.warning("- SecureBootModel was requested, but SIP is lowered for root patching - patched Kernel Collections can't pass Apple Secure Boot, disabling it")
+                        self.constants.secure_status = False
                     logging.info("- Disabling SecureBootModel (non-T2)")
                     self.config["Misc"]["Security"]["SecureBootModel"] = "Disabled"
+                    self.config["Misc"]["Security"]["ApECID"]          = 0
 
         # ==============================================================
         # AMFIPass injection (evaluation happens at the top of _build())

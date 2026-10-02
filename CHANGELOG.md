@@ -1,4 +1,24 @@
 # OpenCore Legacy Patcher T2 changelog / OpenCore Legacy Patcher T2-Änderungsprotokoll
+## 4.0.0.190007.1 - 4.0.0 alpha 19.7.1
+This release:
+- upgrades Python to Python 3.13.16
+- fixes a bug where on Macs with Legacy Wireless WiFi cards, installing and building OpenCore EFI may fail
+
+## 4.0.0.190007 - 4.0.0 alpha 19.7
+This release:
+- fixes a bug where `agdpmod=pikera` was injected for every AMD dGPU and for every MacBookPro14,3 variant. Polaris and Vega dGPUs need `agdpmod=vit9696` and could end up with a black screen. `pikera` is now only injected when a Navi dGPU is detected, both in the regular build and in the T2 boot-args. thx @Medelcartelinc (#467)
+- bundles SpoofVMM.kext (v4.9.0), thx @zkennedy137 and enables it on T2 Macs instead of the `revpatch=sbvmm` boot-arg, which has been removed from the T2 boot-args. T2 Macs now get SMBIOS spoofing (Automatic, UpdateSMBIOS, UpdateDataHub, UpdateNVRAM and CustomSMBIOSGuid), which SpoofVMM requires. thx @Medelcartelinc (#469) and @zkennedy137 for writing SpoofVMM and testing it on T2 Macs
+- adds BroadcomVTD-Tahoe.kext (v0.2.17) for legacy Broadcom Wi-Fi, enabled together with the existing IO80211FamilyLegacy patches. thx @Medelcartelinc (#476)
+- fixes a bug where `macserial` and `ocvalidate` were stored without the executable bit, so ZIP downloads and fresh clones failed Advanced SMBIOS spoofing with `PermissionError [Errno 13]`, and config validation would fail the same way.
+- adds a `--update-channel` flag to `Build-Project.command` and fixes it having no effect: the channel only reached the build process's environment, so every app fell back to the official channel. It is now embedded as `UpdateChannel` in the app's Info.plist and read at launch. A new build default replaces an earlier choice stored in the settings once; after that, the choice made in Settings wins again.
+- fixes a missing space in the message shown when cancelling an update.
+- fixes the following vulnerability:
+
+gui_build_verify.py:
+- in Verify Generated Build (TEST-B): the check only tested whether files with the expected names existed, so empty folders, zero-byte files or symlinks named like the required kexts passed. Missing kexts were only a warning and the result always said "Verification Complete.". Kexts were never checked against Kernel > Add (enabled, MinKernel/MaxKernel), boot-args were matched as substrings (`dart=0` also matched `dart=01`), AMD patches were only found by an exact-case "AMD" or "Polaris" in the patch comment, config.plist was parsed and hashed from two separate reads, and the folder checked was rebuilt from `launcher_script_location` instead of the folder the EFI builder actually writes to.
+
+Impact: a tampered or incomplete EFI, for example one with a swapped kext binary or a kext that never loads, could be reported as verified, giving false confidence before installing it. The verification now fails closed (PASSED / FAILED / incomplete spec), validates each kext as a real bundle with exactly one Kernel > Add entry active for the target kernel, checks Lilu load order and the IOSkywalkFamily block, matches boot-args as whole tokens and requires `boot-args` in NVRAM > Delete, hashes config.plist and the whole EFI folder from the same bytes, rejects symlinks and checks `opencore_release_folder`. Closing the window during verification no longer crashes the app. TEST-B expected values that are not set yet are reported as UNASSERTED instead of passing silently.
+
 ## 4.0.0.19006.6 - 4.0.0 alpha 19.6.6
 **NOTICE:**
 
