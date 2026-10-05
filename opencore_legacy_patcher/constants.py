@@ -15,10 +15,10 @@ class Constants:
     def __init__(self) -> None:
         # Patcher Versioning
         # Wenn eine Version mit s endet, es heißt, dass sie noch nicht fertig ist.
-        self.patcher_version:                 str = "4.0.0.190007.1"
+        self.patcher_version:                 str = "4.0.0.190008.3"
         self.patcher_version_label=self.patcher_version
-        self.patcher_support_pkg_version:     str = "2.0.4"  # PatcherSupportPkg
-        self.copyright_date:                  str = "Copyright © 2020-2026 Dortania · T2 fork © 2026 Albert Müller"
+        self.patcher_support_pkg_version:     str = "2.0.6"  # PatcherSupportPkg
+        self.copyright_date:                  str = "Copyright © 2020-2026 Dortania and OpenCore Legacy Patcher contributors · T2 fork © 2026 Albert Müller"
 
         # Application identity
         # Must NOT be "com.dortania.opencore-legacy-patcher": Launch Services
@@ -104,6 +104,7 @@ class Constants:
         self.apple_camera_version:  str = "1.0.0"  #  AppleCameraInterface (14.0 Beta 1)
         self.t1_sse_version:        str = "1.1.0"  #  AppleSSE      (13.6 - T1 support)
         self.t1_key_store_version:  str = "1.1.0"  #  AppleKeyStore (13.6 - T1 support)
+        self.t1_key_store_tahoe_version: str = "1.2.0"  #  AppleKeyStore (26.0 - T1 support, from Dortania)
         self.t1_credential_version: str = "1.0.0"  #  AppleCredentialManager (13.6 - T1 support)
         self.t1_corecrypto_version: str = "1.0.1"  #  corecrypto    (13.6 - T1 support)
         self.apple_spi_version:     str = "1.0.0"  #  AppleHSSPISupport   (14.4 Beta 1)
@@ -117,6 +118,7 @@ class Constants:
         self.io80211elcap_version:     str = "2.0.1"  # IO80211ElCap
         self.io80211legacy_version:    str = "1.0.0"  # IO80211FamilyLegacy (Ventura)
         self.ioskywalk_version:        str = "1.2.0"  # IOSkywalkFamily (Ventura)
+        self.airport_atheros_tahoe_version: str = "1.0.0"  # AirPortAtheros40-Tahoe
         self.bigsursdxc_version:       str = "1.0.0"  # BigSurSDXC
         self.monterey_ahci_version:    str = "1.0.0"  # CatalinaAHCI
 
@@ -277,6 +279,7 @@ class Constants:
         self.dGPU_switch:            bool = False  # Set Display GPU Switching for Windows
         self.force_surplus:          bool = False  # Force SurPlus patch in newer OSes
         self.force_latest_psp:       bool = False  # Force latest PatcherSupportPkg
+        self.use_ybronst_wifi:       bool = True   # WiFi root patches: use YBronst's -YB payloads instead of Dortania's
         self.disable_fw_throttle:    bool = False  # Disable MSR Power Control and XCPM
         self.software_demux:         bool = False  # Enable Software Demux patch set
         self.force_vmm:              bool = False  # Force VMM patch
@@ -535,6 +538,10 @@ class Constants:
         return self.payload_kexts_path / Path(f"Misc/AppleKeyStore-v{self.t1_key_store_version}.zip")
 
     @property
+    def t1_key_store_tahoe_path(self):
+        return self.payload_kexts_path / Path(f"Misc/AppleKeyStore-Tahoe-v{self.t1_key_store_tahoe_version}.zip")
+
+    @property
     def t1_credential_path(self):
         return self.payload_kexts_path / Path(f"Misc/AppleCredentialManager-v{self.t1_credential_version}.zip")
 
@@ -581,6 +588,10 @@ class Constants:
     @property
     def ioskywalk_path(self):
         return self.payload_kexts_path / Path(f"Wifi/IOSkywalkFamily-v{self.ioskywalk_version}.zip")
+
+    @property
+    def airport_atheros_tahoe_path(self):
+        return self.payload_kexts_path / Path(f"Wifi/AirPortAtheros40-Tahoe-v{self.airport_atheros_tahoe_version}.zip")
 
     @property
     def applealc_path(self):
@@ -1014,7 +1025,7 @@ class Constants:
         "j215ap",  #  MacBookPro16,4
         "j185ap",  #  iMac20,1
         "j185fap",  # iMac20,2
-        # "x86legacy",  # non-T2 Macs/VMs, Monterey's boot.efi enforces this on all Macs
+        "x86legacy",  # non-T2 Macs/VMs, Monterey's boot.efi enforces this on all Macs
     ]
 
     sandy_board_id_stock = [

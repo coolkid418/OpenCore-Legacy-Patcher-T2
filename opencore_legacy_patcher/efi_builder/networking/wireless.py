@@ -8,7 +8,7 @@ from .. import support
 
 from ... import constants
 
-from ...datasets import smbios_data
+from ...datasets import smbios_data, os_data
 from ...support import utilities
 from ...detections import device_probe
 
@@ -56,8 +56,16 @@ class BuildWirelessNetworking:
                 support.BuildSupport(self.model, self.constants, self.config).enable_kext("IO80211FamilyLegacy.kext", self.constants.io80211legacy_version, self.constants.io80211legacy_path)
                 support.BuildSupport(self.model, self.constants, self.config).get_kext_by_bundle_path("IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext")["Enabled"] = True
                 support.BuildSupport(self.model, self.constants, self.config).get_item_by_kv(self.config["Kernel"]["Block"], "Identifier", "com.apple.iokit.IOSkywalkFamily")["Enabled"] = True
-                if self.constants.detected_os >= 15:
-                    support.BuildSupport(self.model, self.constants, self.config).enable_kext("BroadcomVTD.kext", self.constants.broadcomvtd_tahoe_version, self.constants.broadcomvtd_tahoe_path)
+                # IOSkywalkFamily/IO80211FamilyLegacy only load on Sonoma+ (MinKernel 23.0.0),
+                # so the boot-args below are only needed there. detected_os is a Darwin major:
+                # 15 is El Capitan, which matched every supported macOS.
+                if self.constants.detected_os >= os_data.os_data.sonoma:
+                    # BroadcomVTD-Tahoe is only needed (and only built) for macOS 26 Tahoe.
+                    # detected_os is a Darwin major, so compare against os_data.tahoe (25),
+                    # not 15 (El Capitan), which matched every supported macOS.
+                    if self.constants.detected_os >= os_data.os_data.tahoe:
+                        logging.info("Injecting BroadcomVTD.kext")
+                        support.BuildSupport(self.model, self.constants, self.config).enable_kext("BroadcomVTD.kext", self.constants.broadcomvtd_tahoe_version, self.constants.broadcomvtd_tahoe_path)
                     current_boot_args = self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"].get("boot-args", "")
                     for arg in ["ipc_control_port_options=0", "-amfipassbeta"]:
                         if arg.split("=")[0] not in current_boot_args:
@@ -75,7 +83,7 @@ class BuildWirelessNetworking:
                     self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += f" brcmfx-country={self.computer.wifi.country_code}"
                 if self.constants.enable_wake_on_wlan is True:
                     logging.info("- Enabling Wake on WLAN support")
-                    self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += f" -brcmfxwowl"
+                    self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += " -brcmfxwowl"
             elif self.computer.wifi.chipset == device_probe.Broadcom.Chipsets.AirPortBrcm4360:
                 self._wifi_fake_id()
             elif self.computer.wifi.chipset == device_probe.Broadcom.Chipsets.AirPortBrcm4331:
@@ -90,6 +98,8 @@ class BuildWirelessNetworking:
             support.BuildSupport(self.model, self.constants, self.config).enable_kext("corecaptureElCap.kext", self.constants.corecaptureelcap_version, self.constants.corecaptureelcap_path)
             support.BuildSupport(self.model, self.constants, self.config).enable_kext("IO80211ElCap.kext", self.constants.io80211elcap_version, self.constants.io80211elcap_path)
             support.BuildSupport(self.model, self.constants, self.config).get_kext_by_bundle_path("IO80211ElCap.kext/Contents/PlugIns/AirPortAtheros40.kext")["Enabled"] = True
+            # Tahoe needs a patched AirPortAtheros40; the IO80211ElCap plugin is capped at MaxKernel 24.99.99
+            support.BuildSupport(self.model, self.constants, self.config).enable_kext("AirPortAtheros40-Tahoe.kext", self.constants.airport_atheros_tahoe_version, self.constants.airport_atheros_tahoe_path)
 
 
     def _prebuilt_assumption(self) -> None:
@@ -119,6 +129,8 @@ class BuildWirelessNetworking:
             support.BuildSupport(self.model, self.constants, self.config).enable_kext("corecaptureElCap.kext", self.constants.corecaptureelcap_version, self.constants.corecaptureelcap_path)
             support.BuildSupport(self.model, self.constants, self.config).enable_kext("IO80211ElCap.kext", self.constants.io80211elcap_version, self.constants.io80211elcap_path)
             support.BuildSupport(self.model, self.constants, self.config).get_kext_by_bundle_path("IO80211ElCap.kext/Contents/PlugIns/AirPortAtheros40.kext")["Enabled"] = True
+            # Tahoe needs a patched AirPortAtheros40; the IO80211ElCap plugin is capped at MaxKernel 24.99.99
+            support.BuildSupport(self.model, self.constants, self.config).enable_kext("AirPortAtheros40-Tahoe.kext", self.constants.airport_atheros_tahoe_version, self.constants.airport_atheros_tahoe_path)
         elif smbios_data.smbios_dictionary[self.model]["Wireless Model"] == device_probe.Broadcom.Chipsets.AirportBrcmNIC:
             support.BuildSupport(self.model, self.constants, self.config).enable_kext("AirportBrcmFixup.kext", self.constants.airportbcrmfixup_version, self.constants.airportbcrmfixup_path)
 
@@ -127,8 +139,21 @@ class BuildWirelessNetworking:
             support.BuildSupport(self.model, self.constants, self.config).enable_kext("IO80211FamilyLegacy.kext", self.constants.io80211legacy_version, self.constants.io80211legacy_path)
             support.BuildSupport(self.model, self.constants, self.config).get_kext_by_bundle_path("IO80211FamilyLegacy.kext/Contents/PlugIns/AirPortBrcmNIC.kext")["Enabled"] = True
             support.BuildSupport(self.model, self.constants, self.config).get_item_by_kv(self.config["Kernel"]["Block"], "Identifier", "com.apple.iokit.IOSkywalkFamily")["Enabled"] = True
-            if self.constants.detected_os >= 15:
-                support.BuildSupport(self.model, self.constants, self.config).enable_kext("BroadcomVTD.kext", self.constants.broadcomvtd_tahoe_version, self.constants.broadcomvtd_tahoe_path)
+            # Sonoma+ only, see _on_model() (detected_os is a Darwin major, 15 = El Capitan)
+            if self.constants.detected_os >= os_data.os_data.sonoma:
+                # BroadcomVTD-Tahoe is only needed (and only built) for macOS 26 Tahoe.
+                # detected_os is a Darwin major, so compare against os_data.tahoe (25),
+                # not 15 (El Capitan), which matched every supported macOS.
+                #
+                # This is the pre-built assumption path: no Wi-Fi card was detected on
+                # the host, so the card type here only comes from the model's stock
+                # Wi-Fi in smbios_data. On the host itself that means the Mac has no
+                # (recognised) Broadcom card - e.g. it was removed or swapped for a
+                # different card - so never inject the kext there. Only use the stock
+                # assumption when building for another Mac (custom_model), where it
+                # is the only information available.
+                if self.constants.custom_model and self.constants.detected_os >= os_data.os_data.tahoe:
+                    support.BuildSupport(self.model, self.constants, self.config).enable_kext("BroadcomVTD.kext", self.constants.broadcomvtd_tahoe_version, self.constants.broadcomvtd_tahoe_path)
                 current_boot_args = self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"].get("boot-args", "")
                 for arg in ["ipc_control_port_options=0", "-amfipassbeta"]:
                     if arg.split("=")[0] not in current_boot_args:
@@ -150,7 +175,7 @@ class BuildWirelessNetworking:
             return
 
         logging.info("- Enabling Wake on WLAN support")
-        self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += f" -brcmfxwowl"
+        self.config["NVRAM"]["Add"]["7C436110-AB2A-4BBB-A880-FE41995C9F82"]["boot-args"] += " -brcmfxwowl"
 
 
     def _wifi_fake_id(self) -> None:

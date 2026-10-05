@@ -268,7 +268,23 @@ def check_ap_security_policy():
     return 0
 
 def check_secure_boot_level():
-    if check_secure_boot_model() in constants.Constants().sbm_values:
+    secure_boot_model = check_secure_boot_model()
+
+    # x86legacy is deliberately not part of constants.sbm_values: on genuine non-T2
+    # Macs, Monterey's boot.efi sets HardwareModel to x86legacy by itself, so the
+    # model string alone would block root patching on every stock Mac.
+    # OpenCore, however, also sets AppleSecureBootPolicy to Medium (1) when
+    # SecureBootModel is x86legacy (or "Default" resolving to it on a non-T2
+    # SMBIOS), while genuine non-T2 Macs report 0. In that state Apple Secure
+    # Boot verifies the Kernel Collections' .im4m, which root patching breaks -
+    # boot.efi then rejects BootKernelExtensions.kc (Err(0x1A), Issue #465).
+    # Previously this case returned False and root patching went ahead anyway.
+    if secure_boot_model == "x86legacy":
+        if check_ap_security_policy() != 0:
+            return True
+        return False
+
+    if secure_boot_model in constants.Constants().sbm_values:
         # OpenCorePkg logic:
         #   - If a T2 Unit is used with ApECID, will return 2
         #   - Either x86legacy or T2 without ApECID, returns 1
@@ -295,7 +311,6 @@ def disable_cls():
 
 
 def cls():
-    global clear
     if not clear:
         return
     if check_cli_args() is None:
@@ -304,7 +319,7 @@ def cls():
             os.system("cls" if os.name == "nt" else "clear")
         else:
             logging.info("\u001Bc")
-
+            
 def get_nvram(variable: str, uuid: str = None, *, decode: bool = False):
     # TODO: Properly fix for El Capitan, which does not print the XML representation even though we say to
 
@@ -590,7 +605,7 @@ def get_admin_permission(action: str = "/usr/bin/whoami", args: list =None, reas
 
     * action: a str path to the progra being executed
     * args: a list of all the arguments to be sent to the program
-    * reason: the message that tells the user why they are seeing this format it like this: why you are seeing this (e.g "OpenCore-Patcher-T2 needs your administrative permission") and what will happen (e.g "to verify that you are an admin")
+    * reason: the message that tells the user why they are seeing this format it like this: why you are seeing this (e.g "OpenCore-Patcher-T2 needs your administrative permission") and what will [...]
     * confirm_button: the name of the OK button that is desplayed to the user if the default doesn't work
     * deny_button: the name of the Cancel button that is desplayed to the user if the default doesn't work
     """
