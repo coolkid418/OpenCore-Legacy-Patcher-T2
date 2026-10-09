@@ -1,7 +1,163 @@
 # OpenCore Legacy Patcher T2 changelog / OpenCore Legacy Patcher T2-Änderungsprotokoll
+## 4.0.0.190009.2 - 4.0.0 alpha 19.9.2
+This release:
+- fixes a kernel panic on macOS 26 Tahoe on Macs with a USB top case (internal keyboard/trackpad driven by AppleUSBTopCase.kext): adds the `IOHIDFamily USB topcase panic` kernel patch (`IOHIDDevice::didTerminate`, MinKernel 25.0.0) and enables it wherever AppleUSBTopCase.kext is injected (ported from Dortania d147e58), thx @Jazzzny and Dortania
+- fixes the NVIDIA Web Driver patchset on Tahoe: CoreDisplay now uses the `10.13.6-25` payload instead of the Sequoia one (ported from Dortania dd681ac), thx @Jazzzny and Dortania
+- fixes the Skylake graphics patches on Tahoe: T1 Macs now get the `KyberInTheSEPRegisteredKeys` MessageProtection feature flag turned off during root patching (ported from Dortania b8ae03e), thx @Jazzzny and Dortania
+- removes the Tahoe safety guard that skipped the Skylake graphics patchset unless DortaniaInternal was active
+- fixes Skylake root patching on Ventura and Sonoma: AppleIntelSKLGraphicsMTLDriver.bundle was looked up in the `12.5-22` payload, which only contains the Broadwell driver; it now uses `12.5` like Dortania
+- re-enables root patching for non-Metal GPUs (NVIDIA Web Driver, NVIDIA Tesla, AMD TeraScale 1/2, Intel Iron Lake/Sandy Bridge) on Tahoe by removing the safety guards added in 6d6eea9
+- replaces the non-Metal shared patchsets (`non_metal.py`, `non_metal_ioaccel.py`, `non_metal_coredisplay.py`, `non_metal_enforcement.py`) with Dortania's current versions, so they use the Tahoe-era PatcherSupportPkg payloads. This affects every macOS version, not just Tahoe:
+  - SkyLight: only the `SkyLight`/`SkyLightOriginal` binaries are replaced with a build matching the macOS version (`26.7-25` on Tahoe) instead of merging the old 10.14.6 `SkyLight.framework`; the QuartzCore merge is gone
+  - adds `iconservicesagent` from 26.0 on Tahoe
+  - the IOSurface version is now chosen per GPU (10.14.6 for NVIDIA Web Driver and TeraScale 2, 10.15.7 for the rest)
+  - removes fork-only additions: `screencapture`, the Screen Sharing bundles, the DropboxHack SkyLight plugin and the GlobalPreferences/WebKit `defaults write` tweaks
+  - Macs with non-Metal GPUs that are already root patched should revert root patches and patch again, so the old SkyLight/QuartzCore files and plugins don't stay on the system
+- hides fork update channels whose GitHub account or repository no longer exists (e.g. "Medelcartelinc (Fork)") from Settings > App > "Update Channel"; if such a channel was selected, the patcher automatically switches back to the official channel. A missing internet connection never counts as offline, and the channel reappears if the repository comes back. This mitigates a vulnerability where if the account ever gets banned or deleted, the channel remains the same and an attacker could launch a supply chain attack by registering the same, old name.
+
+Impact: if Medelcartelinc's account ever gets banned or deleted, an attacker could set a fake GitHub repository to launch supply chain attacks by just sticking to the old channel. This vulnerability is fixed by ensuring that if the account ever gets banned or deleted, users are migrated safely to the main project instead.
+
+- fixes another vulnerability where in the Ask Gemini handling in gui_build.py, an attacker could cause an unintended fallback or launch DoS attack:
+
+                    except Exception as clipboard_error:
+                        logging.error(f"Failed to copy build log to clipboard: {clipboard_error}")
+
+                    if self.constants.detected_os >= os_data.os_data.big_sur:
+                        logging.info("- Launching Gemini AI Assistant (wx.html2 WebView)")
+                        gemini_window = gui_support.GeminiWebView(self, title="Gemini AI Assistant")
+                        gemini_window.Show()
+                    else: # <- an attacker could cause unintended fallback or DoS by setting constants.detected_os to a specially crafted value
+                        logging.info("- Launching Gemini AI Assistant (default web browser, host predates Big Sur)")
+                        logging.info("macOS Catalina, Mojave and High Sierra can't load Gemini in Safari and WebKit because they're too old.")
+                        webbrowser.open("https://gemini.google.com")
+
+Impact: an attacker could set constants.detected_os inside gui_build.py to a specially crafted value to cause unintended fallback or crash the application to launch DoS attacks. This vulnerability is fixed by ensuring Gemini ever opens only if the version in constants.detected_os can be parsed.
+
+## 4.0.0.190009.1 - 4.0.0 alpha 19.9.1
+This release:
+- fixes a bug where smbios_data listed the 16-inch 2019 MacBook Pro supports maximum Sequoia, although Apple natively supports Tahoe on these models
+- fixes a bug where on unsupported T2 Macs Spoof-VMM is enabled but none of the boot arguments are injected due to a bug where the logic checked if the Mac was running Tahoe instead of checking if it is unsupported by Tahoe
+
+## 4.0.0.190009 - 4.0.0 alpha 19.9
+This release:
+- fixes several vulnerabilities in the Privileged Helper Tool and the self signing workflow that allowed **local privilege escalation to root without a password** (see "Security fixes" below)
+- create-signing-certificate.sh now keeps the signing key in its own locked keychain (oclp-signing.keychain-db, codesign-only access, auto-lock after 5 minutes and on sleep) instead of the login keychain, and can export the key off the machine (`--export`) and import it again (`--import`); Build-Project.command locks the keychain after every build
+- adds verify-signature.sh to confirm a self signed (not notarized) build is your own before accepting the Gatekeeper warning; install.sh refuses unsigned or ad-hoc signed helpers and sets root:wheel 4755 explicitly
+- moves the SpoofVMM kext payloads from `payloads/Kexts/Acidanthera` to the new `payloads/Kexts/T2` folder, since SpoofVMM is not an Acidanthera kext
+
+### Security fixes - Privileged Helper Tool
+
+Severity: **High** - local privilege escalation (CVSS 3.1 AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H, 7.8).
+Affected: every release (non-DEBUG) build of `com.albert-mueller.opencore-patcher-t2.privileged-helper` up to and including the prebuilt binary shipped with this version, whether signed with a Developer ID or a self signed certificate. DEBUG builds (`make debug`) were never meant to be secure and are unchanged; they still skip the caller check and rely on the command allowlist.
+
+Impact: the helper is installed setuid root and runs any command its caller passes. Any process running as the logged-in user - malware, a malicious script, a compromised app - that got past the caller check could run arbitrary commands as root without an administrator password: modify or replace system files and the sealed system volume, install persistent LaunchDaemons or kernel extensions, read every user's data and disable security features. No user interaction was needed.
+
+1. **Caller signature was never validated** (CWE-347). The helper compared the certificate lists returned by `SecCodeCopySigningInformation()` for itself and its parent process, but never called `SecStaticCodeCheckValidity()` / `SecCodeCheckValidity()`. Certificates are public and that function does not verify the signature, so a modified copy of OpenCore-Patcher-T2.app, or any binary carrying a copied signature blob, presented the "right" certificates and was accepted.
+   Fixed: the helper validates its own signature, then requires the running parent process to satisfy `identifier "com.dortania.opencore-legacy-patcher-t2" and certificate leaf = H"<SHA-1 of the helper's own leaf certificate>"`, checked dynamically (running process) and strictly on disk (all architectures).
+2. **No identifier pinning** (CWE-863). Any binary signed with the same certificate counted as a valid caller, including other tools in the app bundle (e.g. RSRRepair, bundled interpreters/libraries). Any of them that can be made to launch an arbitrary child process became a path to root.
+   Fixed: the requirement pins the app's identifier (`make CLIENT_ID=...` if the bundle identifier is changed).
+3. **Caller identified by file path, not by the running code** (CWE-367). The parent was looked up with `proc_pidpath()` and its file on disk was inspected, so the code that actually ran was never checked (TOCTOU: the file could differ from what was executing).
+   Fixed: the parent is obtained by PID with `SecCodeCopyGuestWithAttributes()`, validated as running code, and the helper refuses if it was reparented (caller exited) during validation.
+4. **Hardened runtime not enforced** (CWE-693). A caller signed without the hardened runtime was accepted; such a build of the genuine app can be taken over by the same user via `DYLD_INSERT_LIBRARIES` or a debugger and made to call the helper.
+   Fixed: callers without the hardened runtime are refused with the new error 172 (OCLP_PHT_ERROR_CALLER_NOT_HARDENED, handled like the other permanent signing errors). Note: macOS 10.13 does not enforce the hardened runtime, so this part offers no protection there.
+5. **Signing key exposed in the login keychain** (CWE-522). create-signing-certificate.sh imported the private key into the always-unlocked login keychain and granted `/usr/bin/security` and `codesign` access without prompts. With a self signed certificate that key is the helper's only trust root: any process running as the user could sign its own binary (or export the key) and pass the helper's check.
+   Fixed: dedicated keychain with its own password, codesign-only access, auto-lock, locked after every build, optional export off the machine. The script refuses to continue while the certificate is still in the login or System keychain until `--force` replaces it.
+
+- fixes a vulnerability where inside gui_install_oc.py, an attacker could set constants.detected_os to a specially crafted value:
+
+                    try:
+                          error_dialog = wx.Dialog(self, title="Installation Error", size=(460, 200))
+          
+                          main_sizer = wx.BoxSizer(wx.VERTICAL)
+                          button_sizer = wx.BoxSizer(wx.HORIZONTAL)
+          
+                          error_msg = "OpenCore installation failed.\n\nWould you like to report this issue or ask Gemini for help?"
+                          msg_text = wx.StaticText(error_dialog, label=error_msg)
+                          msg_text.SetFont(gui_support.font_factory(12, wx.FONTWEIGHT_NORMAL))
+          
+                          btn_report = wx.Button(error_dialog, id=wx.ID_OK, label="Report Issue")
+                          btn_gemini = wx.Button(error_dialog, id=wx.ID_ANY, label="Ask Gemini")
+                          btn_close  = wx.Button(error_dialog, id=wx.ID_CANCEL, label="Close")
+          
+                          # Define a custom return code identifier for Gemini tracking
+                          GEMINI_CLICKED_ID = 10001
+          
+                          # Bind an event so clicking the button closes the dialog and returns our custom identifier
+                          error_dialog.Bind(wx.EVT_BUTTON, lambda event: error_dialog.EndModal(GEMINI_CLICKED_ID), btn_gemini)
+          
+                          main_sizer.Add(msg_text, 1, wx.ALL | wx.EXPAND, 20)
+                          button_sizer.Add(btn_report, 0, wx.RIGHT, 10)
+                          button_sizer.Add(btn_gemini, 0, wx.RIGHT, 10)
+                          button_sizer.Add(btn_close, 0)
+          
+                          main_sizer.Add(button_sizer, 0, wx.ALIGN_RIGHT | wx.BOTTOM | wx.RIGHT, 20)
+          
+                          error_dialog.SetSizer(main_sizer)
+                          error_dialog.Layout()
+                          error_dialog.Centre()
+          
+                          response = error_dialog.ShowModal()
+          
+                          if response == wx.ID_OK:
+                              webbrowser.open("https://github.com/albert-mueller/OpenCore-Legacy-Patcher-T2/issues")
+          
+                          # Check directly for your custom event return hook code
+                          # Unter macOS Catalina und älter Gemini funktioniert nicht richtig unter Safari/WebKit
+                          elif response == GEMINI_CLICKED_ID:
+                              # Gemini can't see the install log on its own, so copy it to the clipboard
+                              # and tell the user to paste it in, rather than making them go hunt for
+                              # the text box and select/copy it manually.
+                              try:
+                                  clipboard = wx.Clipboard.Get()
+                                  if not clipboard.IsOpened():
+                                      clipboard.Open()
+                                  clipboard.SetData(wx.TextDataObject(self.text_box.GetValue()))
+                                  clipboard.Close()
+                                  wx.MessageDialog(
+                                      self,
+                                      "The installation log has been copied to your clipboard.\n\nPaste it into the Gemini chat so it can help diagnose the error.",
+                                      "Copied to Clipboard",
+                                      wx.OK | wx.ICON_INFORMATION
+                                  ).ShowModal()
+                              except Exception as clipboard_error:
+                                  logging.error(f"Failed to copy installation log to clipboard: {clipboard_error}")
+          
+                              if self.constants.detected_os >= os_data.os_data.big_sur:
+                                  logging.info("- Launching Gemini AI Assistant (wx.html2 WebView)")
+                                  gemini_window = gui_support.GeminiWebView(self, title="Gemini AI Assistant")
+                                  gemini_window.Show()
+                              else: # <- an attacker could set constants.detected_os to a specially crafted value
+                                  logging.info("- Launching Gemini AI Assistant (default web browser, host predates Big Sur)")
+                                  logging.info("macOS Catalina, Mojave and High Sierra can't load Gemini in Safari and WebKit because they're too old.")
+                                  webbrowser.open("https://gemini.google.com")
+          
+                          error_dialog.Destroy()
+Impact: an attacker could set constants.detected_os to a specially crafted value to cause an unintended legacy fallback or worse, crash the application to launch a DoS attack. This vulnerability has been fixed by ensuring that Gemini ever opens up if constants.detected_os can be parsed.
+
+- fixes a vulnerability where for the Priveleged Helper Tool the minimum requirements are OS X Mavericks, while the patcher requires minimum macOS High Sierra. This creates a massive attack surface where an attacker could install the Priveleged Helper Tool without the actual patcher.
+Impact: a malicious application could install this Priveleged Helper Tool on versions of macOS that this patcher doesn't support to execute arbitary code as root. This vulnerability has been fixed by setting the minimum requirements to match the patcher's.
+
+- fixes a vulnerability where an attacker could abuse the prebuilt Priveleged Helper Tool inside the repository for malware operations by removing it from the repo altogether and requiring every developer that wants the helper built in, to build themselves and as such an attacker can't abuse my own signature for malware delivery. It's like to give your keys for your house or your car to a stranger who wants to steal your personal belongings.
+
+Impact: an attacker could abuse the freely available prebuilt Priveleged Helper Tool my signature for malware delivery. 
+
+### Other changes
+
+- updates PatcherSupportPkg to 2.0.7 to add missing patches for NVIDIA Web Driver and Kepler, replace the old Skylake patchset with the new one and remove a payload that only OCLP-Plus ever used
+- fixes a bug where cryptex=0 was injected on AVX2 Macs, including T1 and T2 Macs
+- updates Spoof-VMM to 4.9.1 to mitigate an issue where while trying to install unsupported macOS versions on T2 Macs where it may fail to get paths for the system root hash/rmtree manifest
+- adds the -spoofvmmbid boot-arg on T2 Macs that are unsupported by macOS Tahoe, so SpoofVMM 4.9.1 enables its (now opt-in) board-id swap and MobileSoftwareUpdate finds the manifest during installation
+- fixes the SpoofVMM payload path: constants still pointed at the non-existent SpoofVMM-v1.0.0-RELEASE.zip instead of the bundled SpoofVMM-4.9.1-Release/Debug.zip
+- fixes a bug where 2 times except Exception as ui_error: inside gui_install_oc.py for the Ask Gemini UI error handling
+- fixes a bug where when compiling the Priveleged Helper Tool on hosts running macOS High Sierra, Mojave or Catalina may fail because by default it sets Priveleged Helper Tool to be built using the Universal architecture that on High Sierra simply doesn't exist.
+
+## 4.0.0.190008.4 - 4.0.0 alpha 19.8.4
+This release:
+- fixes a bug where when trying to install updates automatically, the error Could not prepare working directory' (Errno 13) would appear
+
 ## 4.0.0.190008.3 - 4.0.0 alpha 19.8.3
 This release:
-- fixes a bug where on unsupported Macs running Sequoia or Sonoma SMBIOS spoofing doesn't work
+- fixes a bug where on unsupported T2 Macs running Sequoia or Sonoma SMBIOS spoofing doesn't work
 - Atheros Wi-Fi (AirPortAtheros40) on macOS 26 Tahoe: ports Dortania's Tahoe Atheros kext (dortania/OpenCore-Legacy-Patcher@d9604c3), thx @Jazzzny and Dortania
   - bundles AirPortAtheros40-Tahoe.kext (v1.0.0), loaded on Darwin 25+ (MinKernel 25.0.0). The IO80211ElCap AirPortAtheros40 plugin is now capped at MaxKernel 24.99.99, so only one of them loads
 - T1 Macs (MacBookPro13,2, MacBookPro13,3, MacBookPro14,2, MacBookPro14,3): restores Touch ID on macOS 26 Tahoe by porting Dortania's Tahoe T1 support (dortania/OpenCore-Legacy-Patcher@9809024), thx @Jazzzny and Dortania
@@ -14,11 +170,56 @@ This release:
   - Metal 3802 (Intel Ivy Bridge / Haswell, Nvidia Kepler): Metal.framework 13.2.1-25, MTLCompiler.framework 13.6-25, GPUCompiler.framework 13.2.1-25 and the Tahoe 26.0-3802 default.metallib / AlloyCommonLibrary.metallib for Tungsten, VFX, VectorKit and RenderBox. The 13.2.1 Metal downgrade is no longer applied on Tahoe. Ivy Bridge uses the 11.7.10 HD4000 Metal driver again on Tahoe
   - Nvidia Kepler: adds ImageIO.framework, CMPhoto.framework and the nsattributedstringagent sandbox profile (26.0-25G229); on Macs with a Haswell iGPU next to the Kepler dGPU, OpenCL.framework 12.5 is installed as well
   - new shared Tahoe Graphics patchset (RenderBox default.metallib 26.0-3802) for AMD, Broadwell, Haswell, Ivy Bridge and Kepler, plus the Tahoe camera patch (CoreMediaIO.framework / AppleCameraAssistant, 14.0 Beta 1) for Broadwell and Haswell
-  - all referenced payloads ship in PatcherSupportPkg 2.0.5
+  - all referenced payloads ship in PatcherSupportPkg 2.0.6
 - fixes a bug where most Macs had no USB port map on macOS 26 Tahoe: `USB-Map-Tahoe.kext` had lost 233 of its 281 port mappings, so it loaded without any mapping on Ivy Bridge and newer Macs (MacBookPro9,x–12,x, MacBookAir5,x–7,x, iMac13,x–17,1, Macmini6,x/7,1, MacPro6,1) and without the per-controller EHCI/OHCI entries on older models. All mappings are restored from Dortania's Tahoe USB map (dortania/OpenCore-Legacy-Patcher@feca197), thx @Jazzzny and Dortania
   - keeps this fork's own fixes for MacBookPro3,1 and MacBook5,1/5,2
 - Penryn (Core 2 Duo) Macs: adds the `-nomt_core` boot-arg so macOS 26 Tahoe boots reliably, ported from dortania/OpenCore-Legacy-Patcher@7007536, thx @Jazzzny and Dortania
 - AppleGraphicsPowerManagement: adds the missing iMac19,1 and iMac19,2 power management profiles (GFX0 + IGPU), ported from dortania/OpenCore-Legacy-Patcher@58f66ad, thx @Jazzzny and Dortania
+- fixes a bug where when clicking Checking for updates returns pre-release versions; instead, now for pre-release versions the user needs manually to opt-in
+- fixes a bug where when switching channels, it checks for any release, including pre-release versions instead of switching to the last stable version
+
+- fixes a vulnerability inside gui_oc_settings.py where an attacker could manipulate the input:
+
+        if dialog.ShowModal() == wx.ID_OK:
+                        selection = dialog.GetSelection()
+                        if selection == 0:
+                            self.constants.build_profile = "standard"
+                        elif selection == 1:
+                            self.constants.build_profile = "test_b"
+                        elif selection == 2:
+                            self.constants.build_profile = "test_c"
+                        elif selection == 3:
+                            self.constants.build_profile = "test_c_spoofed"
+                        elif selection == 4:
+                            self.constants.build_profile = "test_d"
+                        # <- an attacker could set selection to a specially crafted value
+                        dialog.Destroy()
+                    else: #We asume that the user doesn't want to save OpenCore so we stop.
+                        dialog.Destroy()
+
+Impact: an attacker could set selection to a specially crafted value, which can cause the application to crash or execute arbitary code. This vulnerability is fixed by adding an else condition so if an attacker manages to set selection to a specially crafted value, the menu immediately closes instead of crashing or executing code.
+
+- fixes a vulnerability in gui_help.py where an attacker could cause an unintended fallback by setting constants_detected_os to a specially crafted value to cause Gemini to open in a web browser instead:
+
+       if self.constants.detected_os >= os_data.os_data.big_sur:
+                  logging.info("- Launching Gemini AI Assistant (wx.html2 WebView)")
+      
+                  # Uses gui_support.GeminiWebView (wx.html2.WebView) instead of
+                  # the third-party 'pywebview' package: pywebview's Cocoa
+                  # backend crashes the navigation delegate on macOS hosts
+                  # older than 11.3 (e.g. 10.13 High Sierra), see GeminiWebView
+                  # docstring for details.
+                  #
+                  # Parented to self.parent_frame (the real top-level app window),
+                  # NOT self.dialog (the modal sheet this button lives in) - see
+                  # the comment on self.parent_frame in __init__ for why.
+                  window = gui_support.GeminiWebView(self.parent_frame, size=(500, 850))
+                  window.Show()
+              else:
+                  logging.info("- Launching Gemini AI Assistant (default web browser, host predates Big Sur)")
+                  logging.info("macOS Catalina, Mojave and High Sierra can't load Gemini in Safari and WebKit because they're too old.")
+                  webbrowser.open("https://gemini.google.com")
+Impact: an attacker could set constants.detected_os to a specially crafted boolean to launch a DoS attack or cause unintended legacy fallback. This vulnerability is fixed by ensuring Gemini ever launches only if the version set in constants.detected_os can be parsed.
 
 **Note:** T1 Touch ID on Tahoe is not yet verified on our hardware. If you get a black screen or a flashing Touch Bar at login, please revert root patches and open an issue with your logs.
 
