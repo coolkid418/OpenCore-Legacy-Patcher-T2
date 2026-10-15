@@ -73,30 +73,10 @@ class AMDLegacyGCN(BaseHardware):
         return self._xnu_major >= os_data.ventura.value
 
 
-    def _is_amd_gcn_metal_supported_on_current_os(self) -> bool:
-        """
-        Check if AMD Legacy GCN Metal acceleration packages are fully compatible
-        on the current OS.
-        On macOS 26 Tahoe (golden_gate, Darwin 26) and newer, the legacy Monterey
-        AMD Metal bundles cause a black screen / WindowServer compositor failure
-        identical to the Skylake issue. Patching is skipped unless developer mode
-        is explicitly active.
-        """
-        if self._xnu_major >= os_data.tahoe.value:
-            if not self._dortania_internal_check():
-                return False
-        return True
-
-
     def _model_specific_patches(self) -> dict:
         """
         Model specific patches
         """
-        if not self._is_amd_gcn_metal_supported_on_current_os():
-            # Preserve unaccelerated display stability on Tahoe to prevent
-            # the black screen / freeze state at loginwindow.
-            return {}
-
         # If 3802 GPU present, use stock Monterey bronze bundle even on Sequoia
         bronze_bundle_source = "12.5"
         if self._is_gpu_architecture_present(
@@ -108,6 +88,8 @@ class AMDLegacyGCN(BaseHardware):
         ) is False:
             if self._xnu_major >= os_data.sequoia.value:
                 bronze_bundle_source = "12.5-25" if self._xnu_major >= os_data.tahoe.value else "12.5-24"
+
+        bronze_bundle_source = self._resolve_gcn_skylake_metal_drivers() or bronze_bundle_source
 
         return {
             "AMD Legacy GCN": {
@@ -141,9 +123,6 @@ class AMDLegacyGCN(BaseHardware):
         if self.native_os() is True:
             return {}
 
-        if not self._is_amd_gcn_metal_supported_on_current_os():
-            return {}
-
         _base = {
             **LegacyMetal31001(self._xnu_major, self._xnu_minor, self._constants.detected_os_version).patches(),
         }
@@ -158,7 +137,12 @@ class AMDLegacyGCN(BaseHardware):
             **AMDOpenCL(self._xnu_major, self._xnu_minor, self._constants.detected_os_version).patches(),
             **TahoeGraphics(self._xnu_major, self._xnu_minor, self._constants.detected_os_version).patches(),
             **self._model_specific_patches(),
-            **yellow_fix_patch,
         })
+
+        # Tahoe-only color fix (same gating as amd_polaris.py) - must not change gamma on Ventura - Sequoia
+        if self._xnu_major >= os_data.tahoe.value:
+            _base.update({
+                **yellow_fix_patch,
+            })
 
         return _base

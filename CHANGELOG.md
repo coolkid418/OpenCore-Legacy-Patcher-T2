@@ -1,4 +1,77 @@
 # OpenCore Legacy Patcher T2 changelog / OpenCore Legacy Patcher T2-Änderungsprotokoll
+## 4.0.0.190009.7 - 4.0.0 alpha 19.9.7
+This release:
+- on T2 Macs, now no longer allows flashing to the ESP if Windows or Linux is installed. On Linux is untested whether flashing OpenCore to the ESP causes issues, but on Windows 11 it results in This device needs to be repaired. Now if Windows is installed, it'll show this warning instead:
+<img width="512" height="379" alt="image" src="https://github.com/user-attachments/assets/39d4946e-47ee-437d-bf66-01d05098bc6b" />
+
+- fixes a bug in the Spoof-VMM.kext where on unsupported T2 Macs when trying to boot the installer causes a kernel panic
+- updates the Intel Skylake and AMD Legacy GCN patches to fix a kernel panic on MacBookPro13,3 by updating PatcherSupportPkg to 2.0.8, thx @Jazzzny and @Dortania
+## 4.0.0.190009.6 - 4.0.0 alpha 19.9.6
+- fixes a vulnerability where an attacker could check if opencore_build_for_t2 is True to execute arbitary code:
+
+      if self.opencore_build_for_t2 is not True:
+                  variant = f"NON-T2-{variant}"
+              return f"OpenCore-{variant}.zip" # <- an attacker could execute arbitary code or launch a DoS attack
+Impact: an attacker could check if the Mac is a T2 Mac or not and if yes, to execute arbitary code instead of injecting OpenCore to disk. Or worse, an attacker could inject OpenCore 2.0.7 that is known to cause issues on non-T2 Macs to intentionally corrupt the system. This vulnerability is fixed by ensuring OpenCore ever gets injected if the opencore_build_for_t2 condition exists and is set to either True or False.
+T2 Macs:
+- updates SpoofVMM from 4.9.1 to 4.9.6-alpha2 (`payloads/Kexts/T2/SpoofVMM-4.9.6-alpha2-Release.zip`), thx @Medelcartelinc:
+  - in-kernel Stage 2 installer bypass: patches `-[... runReturningError:]` of `OSIUpdateFirmwareElement`, `OSIVerifyROMElement`, `OSIInstallPersonalizedManifestsElement`, `OSIMSUInstallElement` and `OSIMSUCleanupElement` to return success, so the installer no longer stops at the BridgeOS firmware step on T2 Macs Apple dropped from macOS 26 Tahoe. It is on by default; `-spoofvmmnobypass`, `-spoofvmmnostage2` and `-spoofvmmnocs` turn it off for testing
+  - the default bridge-model is now `J214kAP` (and `hw.target` reports the same), matching the default board-id `Mac-5F9802EFE386AA28` (both MacBookPro16,2)
+  - no new boot-args are needed: OCLP keeps adding `-spoofvmmbid` on unsupported T2 Macs only
+- this is an alpha build of SpoofVMM and only a Release build exists, so the Release build is also used when kext debugging is enabled
+- removes the RestrictEvents boot-args `-revbeta` and `revpatch=sbvmm` from T2 configs (also when left over from a template or older build). RestrictEvents is not injected on T2 Macs, so they had no effect; SpoofVMM handles the VMM spoof
+- SpoofVMM is now only taken from the bundled release: the build no longer falls back to another SpoofVMM zip or to an old, previously extracted `SpoofVMM.kext` (possible when running from source), checks that the added kext really is 4.9.6, and stops with an error if the payload is missing. The second SpoofVMM injection in the T2 handling (logged as "3.0.0") uses the same path now
+- this is not yet tested on real hardware. Please report whether Stage 2 of the Tahoe installer gets past "Failed to install a software update" (attach `/var/log/install.log`)
+
+Non-T2 Macs:
+- fixes MacBookPro11,1, 11,2 and 11,3 (2013/2014 Haswell) freezing at the Apple logo on macOS 15 Sequoia and macOS 26 Tahoe (#218). Since alpha 18 these models got the `ProvideCurrentCpuInfo` kernel quirk, which on Intel CPUs patches the core count to the thread count (meant for Alder Lake and other asymmetrical CPUs) and gave the kernel a wrong CPU topology. It is now only used on MacBookAir8,1 and 8,2 again. Rebuild and reinstall OpenCore to pick up the fix
+
+## 4.0.0.190009.5 - 4.0.0 alpha 19.9.5
+OpenCore:
+- non-T2 Macs now get OpenCore 1.0.8 (`payloads/OpenCore/OpenCore-NON-T2-{DEBUG,RELEASE}.zip`) instead of the T2 OpenCorePkg fork. T2 Macs keep using the T2 fork (`OpenCore-{DEBUG,RELEASE}.zip`, 2.0.4). The payload is picked per build target, so building on a T2 Mac for a non-T2 Mac (and the other way round) uses the right one; the build log and `#Revision > OpenCore-Version` in config.plist show which version was used. The fork was never designed for non-T2 Macs and would cause issues if used on a non-T2 system, including stalls and kernel panics.
+
+## 4.0.0.190009.4 - 4.0.0 alpha 19.9.4
+This release fixes root patching problems introduced or left over while porting Dortania's macOS 26 Tahoe patching scheme:
+
+T2 Macs:
+- fixes the AMD Vega patchset being offered on natively supported macOS versions: iMac Pro (2017) and MacBookPro15,1/15,3 with Vega graphics got the Monterey `AMDRadeonX5000.kext` installed over the native driver on Ventura, Sonoma and Sequoia. On CPUs with AVX2 the patchset is now only used on macOS 26 Tahoe and newer, and never on a Mac that Apple still supports on the running macOS (e.g. MacPro7,1 with Radeon Pro Vega II on Tahoe). CPUs without AVX2 behave as before (like Dortania)
+- never enables the `IOHIDFamily USB topcase panic` kernel patch on T2 Macs (their keyboard, trackpad, Touch Bar and Touch ID are HID devices behind the T2; the patch skips `IOHIDDevice::didTerminate()` for every HID device). This was not reachable with current hardware detection and is a safeguard only
+
+Other Macs:
+- fixes Haswell, Ivy Bridge and NVIDIA Kepler Macs being only half patched on Tahoe: the GPU kexts were installed, but the Metal 3802 stack (Metal 13.2.1-25, MTLCompiler 13.6-25, GPUCompiler 13.2.1-25) was skipped unless Developer Mode was active. The Developer Mode gate is removed (ported from Dortania d622cd5), thx @Jazzzny and Dortania
+- on Tahoe, Metal 3802 GPUs now get only the five prebuilt `26.0-3802` metallibs (Tungsten, RenderBox, VFX, VectorKit, AlloyCommonLibrary) instead of the Sequoia-era MetallibSupportPkg set, and MetallibSupportPkg is no longer required on Tahoe (ported from Dortania 9809024 and c70f40a), thx @Jazzzny and Dortania
+- stops installing the Sequoia-era 3802 metallib set on Metal 31001 GPUs (Broadwell, Skylake, AMD GCN, Polaris, Vega, Navi) on Tahoe; they keep the RenderBox `26.0-3802` metallib via the Tahoe graphics patches, like Dortania
+- re-enables AMD Legacy GCN graphics acceleration on Tahoe (iMac15,1 - iMac17,1, MacPro6,1 etc.) by removing the Developer Mode gate, like Dortania. The Legacy GCN color fix (`AppleColorSyncLinearGamma`) is now only applied on Tahoe, as on Polaris; it was also applied on Ventura - Sequoia before
+- removes the old Moraea non-Metal leftovers, which the current non-Metal stack no longer uses (ported from Dortania bfe8f7c and a898811), thx @Jazzzny and Dortania:
+  - the "Legacy Keyboard Backlight" patchset (`Moraea_BacklightHack`)
+  - the SkyLightPlugins folder is no longer recreated during root patching, and the Monterey CoreWLAN SkyLight plugin is no longer installed
+  - root patching and reverting now remove the old non-Metal preferences (`Moraea_*`, `Amy.MenuBar2Beta` and related keys)
+  - the "Non-Metal Configuration" settings section and the automatic `Moraea_BlurBeta` default are removed
+
+WiFi:
+- fixes root patching aborting on every Mac that needs WiFi patches (Legacy and Modern Wireless, Monterey and newer): the patcher looked for YBronst's WiFi payloads in `-YB` folders, but PatcherSupportPkg ships them in the regular folders (no release ever contained `-YB` folders), so the preflight check failed with "Failed to find ...-YB..." and no patches at all were installed. The `-YB` suffix is gone; `use_ybronst_wifi` still keeps YBronst's approach of reusing the Sequoia (`-24`) builds on Tahoe, thx @YBronst and @Medelcartelinc
+
+macOS installer creation:
+- when creating a macOS installer, you can now erase only a single partition instead of the whole disk: after picking a disk, choose "Erase Entire Disk" (previous behavior) or "Choose Partition". Only the selected partition is reformatted, all other partitions on the disk stay untouched. APFS partitions are erased as a whole container (every volume inside it is lost, the dialog warns about this). Only partitions that can actually be used are listed: EFI, Recovery, reserved and too small partitions are not shown, and you get a warning if the disk doesn't use a GUID partition map
+- macOS 26 Tahoe installers now need a disk or partition of at least 20 GB (previously 14 GB for all versions, which is too small for Tahoe); older macOS installers still need 14 GB
+- the disk macOS is currently booted from is no longer offered for erasing, even if it is an external drive (e.g. when booting Tahoe from an external SSD)
+- disk and partition identifiers are now validated before they are written into the installer script, which runs as root. Impact: none known, this is a safeguard only. The identifiers come from `diskutil`, but anything that ends up in a script run as root should never be trusted blindly
+
+Security and OpenCore installation:
+- hardens installing the launch services for the auto patcher: the files were prepared in a temporary folder the user can write to and then copied by root into /Library/LaunchDaemons without checking what was copied, so another process of the same user could swap them for its own root LaunchDaemon. They are now created in memory, written safely, and checked after installation (a mismatch removes the file and stops the install).
+  Impact: local privilege escalation. Any program running as the logged-in user, without knowing the admin password, could get its own code installed as a LaunchDaemon and run as root at every boot (persistent root access). By replacing the staged file with a symlink, it could also make root copy a root-only file (e.g. password hashes) to a readable location. Exploiting this needs malicious code already running on the Mac and has to hit the short window while the launch services are being installed; it can't be triggered remotely
+- the RSRMonitor launch daemon is no longer written into the app itself (this broke the app's code signature and failed on root-owned app bundles), and symlinks in /Library/Extensions are no longer included in its root cleanup.
+  Impact: the broken code signature could make macOS refuse to open the app or report it as damaged. The symlink change is a safeguard only: creating entries in /Library/Extensions already needs root, and the cleanup removed the symlink itself, not what it points to
+- before deleting the old EFI/OC and System folders as root when installing OpenCore, the target is now checked to be the selected FAT/EFI partition actually mounted there (custom mount points outside /Volumes still work).
+  Impact: data loss, not an attack. If a wrong partition was passed in, root deleted `EFI/OC`, `System` and `boot.efi` on that drive. If the EFI reported no mount point, the paths were taken relative to the app's working directory, which is `/` when the app is opened from Finder, so root ran `rm -rf` on `/System`. With SIP's filesystem protection disabled (common after root patching), this could reach user data through `/System/Volumes/Data`
+- fixes OpenCore installation crashing at the end in Recovery mode (UnboundLocalError) even though the install had succeeded; a failed unmount is now only logged as a warning. Impact: not a security issue; the crash made a successful install look like it had failed
+
+## 4.0.0.190009.3 - 4.0.0 alpha 19.9.3
+This release:
+- adds an end-of-life warning: if the main project repository (albert-mueller/OpenCore-Legacy-Patcher-T2) is archived or deleted, the main menu shows a warning on launch and a "Download OpenCore Legacy Patcher from Dortania" button that opens Dortania's latest release. The check runs once per launch in the background; a missing internet connection or a GitHub rate limit never triggers it, and a renamed repository still counts as active
+- if the repository was deleted, or its name now belongs to a different repository (detected via GitHub's repository ID), the in-app updater stops using the official channel, so a re-registered account can't ship fake updates (same supply chain issue as the fork channels). An archived repository keeps the updater as is
+- changes the link with instructions for T2 Macs from the previous repository: https://github.com/albert-mueller/OpenCore-Legacy-Patcher-T2-Instructions-for-T2-Macs to a now new website: https://albert-mueller.github.io/ . The previous repository will be gone and as such, if you are running older versions of OpenCore Legacy Patcher T2, now it will open a dead link.
+
 ## 4.0.0.190009.2 - 4.0.0 alpha 19.9.2
 This release:
 - fixes a kernel panic on macOS 26 Tahoe on Macs with a USB top case (internal keyboard/trackpad driven by AppleUSBTopCase.kext): adds the `IOHIDFamily USB topcase panic` kernel patch (`IOHIDDevice::didTerminate`, MinKernel 25.0.0) and enables it wherever AppleUSBTopCase.kext is injected (ported from Dortania d147e58), thx @Jazzzny and Dortania
